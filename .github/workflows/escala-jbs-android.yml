@@ -168,20 +168,45 @@ jobs:
               <files-path path="twa_splash/" name="twa_splash" />
           </paths>
           XML
-          cat > app/src/main/res/drawable/splash_solid.xml <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
-          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-              <solid android:color="#081629"/>
-          </shape>
-          XML
+          # O splash precisa ser imagem real com dimensoes positivas.
+          # Um shape XML sem <size> tem dimensoes intrinsecas -1, fazendo
+          # Android Browser Helper falhar ao criar Bitmap ao abrir o app.
+          # PNG transparente sobre o fundo azul escuro evita o quadrado estatico.
+          python3 - <<'PYPNG'
+          from pathlib import Path
+          import struct
+          import zlib
+
+          width = height = 128
+          # RGBA, totalmente transparente; a cor vem de backgroundColor (#081629).
+          scanlines = b''.join(b'\x00' + bytes((8, 22, 41, 0)) * width for _ in range(height))
+          def chunk(kind, data):
+              return (struct.pack('!I', len(data)) + kind + data +
+                      struct.pack('!I', zlib.crc32(kind + data) & 0xffffffff))
+          png = (b'\x89PNG\r\n\x1a\n' +
+                 chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 6, 0, 0, 0)) +
+                 chunk(b'IDAT', zlib.compress(scanlines, level=9)) +
+                 chunk(b'IEND', b''))
+          path = Path('app/src/main/res/drawable-nodpi/splash_solid.png')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(png)
+          print('Splash PNG gerado:', width, 'x', height, 'pixels')
+          PYPNG
           # Icone do aplicativo vem do mesmo repositorio do site.
           cp icon-512.png app/src/main/res/drawable-nodpi/ic_launcher.png
           # Verificacao de integridade basica dos arquivos gerados.
           python3 - <<'PYVALID'
           import xml.etree.ElementTree as ET
-          for p in ('app/src/main/AndroidManifest.xml','app/src/main/res/values/asset_statements.xml','app/src/main/res/xml/filepaths.xml','app/src/main/res/drawable/splash_solid.xml'):
+          from pathlib import Path
+          import struct
+          for p in ('app/src/main/AndroidManifest.xml','app/src/main/res/values/asset_statements.xml','app/src/main/res/xml/filepaths.xml'):
               ET.parse(p)
               print('XML validado:', p)
+          png = Path('app/src/main/res/drawable-nodpi/splash_solid.png').read_bytes()
+          assert png[:8] == b'\x89PNG\r\n\x1a\n', 'Splash nao e PNG'
+          w, h = struct.unpack('!II', png[16:24])
+          assert w >= 1 and h >= 1, 'Splash deve ter dimensoes positivas'
+          print('Splash PNG validado:', w, 'x', h)
           PYVALID
       - name: Compilar APK de teste e APK release sem assinatura
         run: gradle --no-daemon assembleDebug assembleRelease
